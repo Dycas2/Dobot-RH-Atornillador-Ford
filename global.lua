@@ -12,7 +12,8 @@
 
 camera_ip = '192.168.200.50' -- IP de la cámara Robótica/VISOR
 camera_port = 2006           -- Puerto TCP de la cámara (VIA Ethernet --> Puerto LAN2)
-timeout = 5		             -- Límite de espera de socket (segundos)
+timeout = 2		             -- Límite de espera de socket (segundos)
+socket_camara = -1           -- Descriptor de socket persistente (-1 = desconectado)
 i_Aux_Count_Vector_Slot=0    -- Defino una variable (iteradora) auxiliar para monitorear el tamaño del string procesado
 JOB_ACTUAL=0
 
@@ -20,7 +21,44 @@ Var_Delt_X = 0
 Var_Delt_Y = 0
 Var_Delt_Z = 0
 Camara_Disparada=false		 --  Variable de Control
---CAMARA_ACTIVA = true
+CAMARA_ACTIVA = true
+
+--------------------------------------------------------------------
+-- GESTION DE CONEXION PERSISTENTE DE CAMARA
+--------------------------------------------------------------------
+function Conectar_Camara()
+    if socket_camara ~= -1 then
+        return true
+    end
+
+    print(string.format("[CAMARA] Conectando socket persistente (%s:%d)...", camera_ip, camera_port))
+    local err, sock = TCPCreate(false, camera_ip, camera_port)
+    if err ~= 0 then
+        print("[CAMARA ERROR] No se pudo crear socket TCP.")
+        socket_camara = -1
+        return false
+    end
+
+    err = TCPStart(sock, 2)
+    if err ~= 0 then
+        print("[CAMARA ERROR] Timeout al conectar con la camara.")
+        TCPDestroy(sock)
+        socket_camara = -1
+        return false
+    end
+
+    socket_camara = sock
+    print("[CAMARA OK] Conexion persistente establecida.")
+    return true
+end
+
+function Desconectar_Camara()
+    if socket_camara ~= -1 then
+        TCPDestroy(socket_camara)
+        socket_camara = -1
+        print("[CAMARA] Socket persistente cerrado.")
+    end
+end
 
 --*********************************************************************
 -- Este archivo solo se utiliza para definir variables y funciones secundarias.

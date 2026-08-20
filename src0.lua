@@ -30,70 +30,40 @@ torqueOK = false
 -----------------------------------------------------------------------------------------
 
 function Cambio_Job_Camara(Num_Job)
- Wait(500)
-		local Resultado=false						-- Variable que solo sirve para retornar un cambio de job realizado
-		local N_Job = Num_Job
-		local err, socket_job = TCPCreate(false, camera_ip, camera_port)    -- 2. Creamos y definimos socket a conectar con la cámara VIA USUARIO TCP/ETHERNET
-		-------------------------------LOGICA CAMBIO JOBS CAMARA--------------------------------------
-		if err ~= 0 then
-		
-			print('ERROR: No se pudo crear el socket TCP.')
-			
-		end
+	if not CAMARA_ACTIVA then return true end
 
-		err = TCPStart(socket_job, 10)
-		if err ~= 0 then
-			print('ERROR: No se pudo conectar a la cámara.')
-			TCPDestroy(socket_job)
-			
-		end
-		print('Conectado con éxito. Disparando cámara...')
-
-		if 	   N_Job == 1  then
-		
-			local write_err = TCPWrite(socket_job, 'CJB001\r\n') -- DISPARA EL JOB CAM NUMERO 1
-			if write_err ~= 0 then
-				print('ERROR_CAMARA: Fallo en seteo de JOB CAM Nº1')
-				TCPDestroy(socket_job)
-				Resultado = false
-			else
-				print('ERROR_CAMARA: Fallo en seteo de JOB CAM Nº1')
-				JOB_ACTUAL = N_Job
-				resultado = true
-			end
-			
-		elseif N_Job == 2 then
-		
-			local write_err = TCPWrite(socket_job, 'CJB002\r\n') -- DISPARA EL JOB CAM NUMERO 1
-			if write_err ~= 0 then
-				print('ERROR_CAMARA: Fallo en seteo de JOB CAM Nº2')
-				TCPDestroy(socket_job)
-				Resultado = false
-			else
-				JOB_ACTUAL= N_Job
-				Resultado = true
-			end
-		elseif N_Job == 3 then
-			local write_err = TCPWrite(socket_job, 'CJB003\r\n') -- DISPARA EL JOB CAM NUMERO 1
-			if write_err ~= 0 then
-				print('ERROR_CAMARA: Fallo en seteo de JOB CAM Nº3')
-				TCPDestroy(socket_job)
-				Resultado = false
-			else
-				JOB_ACTUAL = N_Job
-				resultado = true
-			end
-		else 
-			print("NUMERO DE JOB SELECCIONADO FUERA DE RANGO")
-			TCPDestroy(socket_job)
-			Resultado = false
-			-- LE DAMOS FIN DE CANAL/COMUNICACIÓN DEL SOCKET
-		end
-		print(string.format("AMBIO DE JOB REALIZADO, JOB CAM ACTUAL = ",JOB_ACTUAL))
-		TCPDestroy(socket_job)
-		return Resultado 				-- ENVIAMOS EL RESULTADO DEL CAMBIO DE JOB (VERDAD SI FUE EFECTUADO)
-		-------------------------------LOGICA CAMBIO JOBS CAMARA--------------------------------------
+	-- Asegura la conexion persistente con la camara
+	if not Conectar_Camara() then
+		print(">>> [CAMARA AVISO] Sin conexion para cambio de Job. Se continua en modo nominal.")
+		JOB_ACTUAL = Num_Job
+		return false
 	end
+
+	-------------------------------LOGICA CAMBIO JOBS CAMARA--------------------------------------
+	local N_Job = Num_Job
+	local cmd = string.format("CJB%03d\r\n", N_Job)
+	local write_err = TCPWrite(socket_camara, cmd)
+	if write_err ~= 0 then
+		print(string.format("ERROR_CAMARA: Fallo en envio de seteo de JOB CAM Nro %d. Reiniciando socket...", N_Job))
+		Desconectar_Camara()
+		JOB_ACTUAL = N_Job
+		return false
+	end
+
+	-- Leemos confirmacion ACK de la camara (CJBPTxxx)
+	local read_err, response = TCPRead(socket_camara, timeout, "string")
+	if read_err == 0 and response ~= nil and string.sub(response, 1, 4) == "CJBP" then
+		JOB_ACTUAL = N_Job
+		print(string.format("CAMBIO DE JOB REALIZADO EXITOSAMENTE, JOB CAM ACTUAL = %d", JOB_ACTUAL))
+		Wait(100) -- Breve pausa para estabilizacion interna de la camara
+		return true
+	else
+		print("AVISO_CAMARA: La camara respondio con aviso en cambio de Job: " .. tostring(response))
+		JOB_ACTUAL = N_Job
+		return false
+	end
+	-------------------------------LOGICA CAMBIO JOBS CAMARA--------------------------------------
+end
 
 
 -----------------------------------------------------------------------------------------
@@ -107,86 +77,86 @@ function Cambio_Job_Camara(Num_Job)
 function Sacar_foto(Num_punto)
 
 	local Num_foto = Num_punto
-	local data_raw 
 	local pose_variables = {}
-	local a = true
---	local fallo_disparo = false
 	
-	if Num_foto == JOB_ACTUAL then -- REBUNDANCIA que nos asegura que el JOB ACTUAL PERTENECE AL PUNTO DE FOTO DEL TORNILLO
-		
-		local err, socket_camera = TCPCreate(false, camera_ip, camera_port)
-		if err ~= 0 then
-			print('ERROR: No se pudo crear el socket TCP.')
-		end
+	-- Inicializamos siempre los offsets en 0 por seguridad
+	Var_Delt_X = 0
+	Var_Delt_Y = 0
+	Var_Delt_Z = 0
+	Camara_Disparada = false
 
-		err = TCPStart(socket_camera, 10)
-		if err ~= 0 then
-			print('ERROR: No se pudo conectar a la cámara.')
-			TCPDestroy(socket_camera)
-		end
+	if not CAMARA_ACTIVA then return true end
 
-		print('Conectado con éxito. Disparando cámara...')
-
-		local write_err = TCPWrite(socket_camera, 'TRX000\r\n') 
-		if write_err ~= 0 then
-		
-			print('ERROR: Fallo al enviar disparo.')
-			TCPDestroy(socket_camera)
-		--	fallo_disparo = true
-		end
-
-		-- 4. Leer respuesta de la cámara
-		local read_err, response = TCPRead(socket_camera, timeout, 'string')
-		Wait(30)
-		TCPDestroy(socket_camera) -- Cerramos el socket inmediatamente para liberar el puerto
-
-		if read_err ~= 0 or response == nil or response == '' then
-			print('ERROR: Fallo al leer datos de la cámara.')
-			Var_Delt_X = 0
-			Var_Delt_Y = 0
-			Var_Delt_Z = 0
-		else
-			print('[RAW RECIBIDO]: ' .. response)
-			local i=0
-			for match in string.gmatch(response, "[^_]+") do
-				table.insert(pose_variables, match)
-				i=i+1
-			end
-			print("Numero de vueltas", i)
-			
-			local volatile_DX= pose_variables[7]
-			local volatile_DY= pose_variables[8]
-			local volatile_DZ= pose_variables[9]
-				
-			if volatile_DX ~= nil then
-				Var_Delt_X = tonumber(volatile_DX)/1000
-				print('Offset X detectado: ' ..Var_Delt_X.. ' mm')
-			else
-				Var_Delt_X=0
-				print('Aviso: No se detectó offset en X (se asume 0 mm)')
-			end
-			if volatile_DY ~= nil then
-				Var_Delt_Y = tonumber(volatile_DY) / 1000
-				print('Offset Y detectado: ' ..Var_Delt_Y..'mm')
-			else
-				Var_Delt_Y=0
-				print('Aviso: No se detectó offset en Y (se asume 0 mm)')
-			end
-			if volatile_DZ ~= nil then
-				Var_Delt_Z = tonumber(volatile_DZ) / 1000
-				print('Offset Z detectado: ' ..Var_Delt_Z.. ' mm')
-			else
-				Var_Delt_Z=0
-				print('Aviso: No se detectó offset en z (se asume 0 mm)')
-			end				
-			Camara_Disparada=true	-- GRABAMOS ESTA VARIABLE DE SEGURIDAD QUE ENCLAVA LA CAMARA PARA NUNCA SER DISPARA DOS VECES	
-		end
-	else
-
-		print("FALLA GENERAL COMUNICACIÓN CAMARA")
-	
+	if not Conectar_Camara() then
+		print("AVISO: No se pudo conectar a la camara. Se asume offset 0 mm.")
+		return false
 	end
-	
+
+	print('Conectado con exito. Disparando camara...')
+
+	-- Disparo extendido estandar SensoPart (TRX00)
+	local write_err = TCPWrite(socket_camara, 'TRX00\r\n') 
+	if write_err ~= 0 then
+		print('ERROR: Fallo al enviar disparo TRX00. Reiniciando socket...')
+		Desconectar_Camara()
+		return false
+	end
+
+	-- 4. Leer respuesta de la camara
+	local read_err, response = TCPRead(socket_camara, timeout, 'string')
+
+	if read_err ~= 0 or response == nil or response == '' then
+		print('ERROR: Fallo al leer datos de la camara o timeout. Se asume offset 0 mm.')
+		Desconectar_Camara()
+		Var_Delt_X = 0
+		Var_Delt_Y = 0
+		Var_Delt_Z = 0
+		return false
+	else
+		print('[RAW RECIBIDO]: ' .. response)
+
+		-- Verificamos si la evaluacion de la camara fue PASS ('P') o FAIL ('F')
+		local estado_eval = string.sub(response, 4, 4)
+		if estado_eval ~= "P" then
+			print("AVISO_CAMARA: La camara evaluo FAIL / Pieza no detectada. Se continua con Offset 0 mm.")
+			return false
+		end
+
+		local i = 0
+		for match in string.gmatch(response, "[^_]+") do
+			table.insert(pose_variables, match)
+			i = i + 1
+		end
+		print("Numero de vueltas", i)
+		
+		local volatile_DX = pose_variables[7]
+		local volatile_DY = pose_variables[8]
+		local volatile_DZ = pose_variables[9]
+			
+		if volatile_DX ~= nil and tonumber(volatile_DX) ~= nil then
+			Var_Delt_X = tonumber(volatile_DX) / 1000
+			print('Offset X detectado: ' .. Var_Delt_X .. ' mm')
+		else
+			Var_Delt_X = 0
+			print('Aviso: No se detecto offset en X (se asume 0 mm)')
+		end
+		if volatile_DY ~= nil and tonumber(volatile_DY) ~= nil then
+			Var_Delt_Y = tonumber(volatile_DY) / 1000
+			print('Offset Y detectado: ' .. Var_Delt_Y .. ' mm')
+		else
+			Var_Delt_Y = 0
+			print('Aviso: No se detecto offset en Y (se asume 0 mm)')
+		end
+		if volatile_DZ ~= nil and tonumber(volatile_DZ) ~= nil then
+			Var_Delt_Z = tonumber(volatile_DZ) / 1000
+			print('Offset Z detectado: ' .. Var_Delt_Z .. ' mm')
+		else
+			Var_Delt_Z = 0
+			print('Aviso: No se detecto offset en z (se asume 0 mm)')
+		end				
+		Camara_Disparada = true	-- GRABAMOS ESTA VARIABLE DE SEGURIDAD QUE ENCLAVA LA CAMARA PARA NUNCA SER DISPARA DOS VECES	
+		return true
+	end
 end 
 
 
@@ -342,7 +312,6 @@ function tor1RC(ntornillo)
 	if CAMARA_ACTIVA == true then
 		MovJ(P49, {user = 0, tool = 1, a = 100, v = 100, cp = 0}) -- Punto de Foto
 		Cambio_Job_Camara(1)
-		Wait(600)
 		Sacar_foto(1)  
 		--Movimientos de APROXIMACION
 		local t1rc_correjido = RelPointUser(P30,{0,-Var_Delt_Z,Var_Delt_Y})
@@ -367,10 +336,10 @@ function tor1RC(ntornillo)
 		MovJ(P1, {user = 0, tool = 1, a = 100, v = 100, cp = 100})
 		SetGlobalVariable("TORNILLO_TOMADO", 0)
 		
-			if tornilloMalo == true then
-				-- AGREGAR LÓGICA PARA SENSAR PRECENCIA DE TORNILLO EN BOCALLAVE. POSIBLE TORNILLO SIN ROSCA
-				verificarTornillo(ntornillo)
-			end
+		if tornilloMalo == true then
+			-- AGREGAR LÓGICA PARA SENSAR PRECENCIA DE TORNILLO EN BOCALLAVE. POSIBLE TORNILLO SIN ROSCA
+			verificarTornillo(ntornillo)
+		end
 		
 		-- RESETEAMOS LAS VARIABLES GLOBALES USADAS EN EL PROCESO PARA ELIMINAR FALSOS VALORES FUTUROS
 		Var_Delt_X = 0
@@ -409,9 +378,8 @@ end
 function tor2RC(ntornillo)
 
 	if CAMARA_ACTIVA == true then
-MovJ(P45, {user = 0, tool = 1, a = 100, v = 100, cp = 0}) -- Punto de Foto
+		MovJ(P45, {user = 0, tool = 1, a = 100, v = 100, cp = 0}) -- Punto de Foto
 		Cambio_Job_Camara(2)
-		Wait(1000)
 		Sacar_foto(2) 
 		--local t2rc_correjido = RelPointUser(P31,{0,Var_Delt_Y,Var_Delt_Z})
 		local t2rc_correjido = RelPointUser(P31,{0,Var_Delt_Z,Var_Delt_Y})
@@ -480,44 +448,44 @@ function tor3RC(ntornillo)
 
 	if CAMARA_ACTIVA == true then
 
-	MovJ(P60, {user = 0, tool = 1, a = 100, v = 100, cp = 0}) -- Punto de Foto
-	Cambio_Job_Camara(3)
-    Wait(1000)
-	Sacar_foto(3)
+		MovJ(P60, {user = 0, tool = 1, a = 100, v = 100, cp = 0}) -- Punto de Foto
+		Cambio_Job_Camara(3)
+		Sacar_foto(3)
 
-	local t3rc_correjido = RelPointUser(P32,{0,Var_Delt_Z,Var_Delt_Y})
-	
-	local t3rc_final = RelPointUser(P16,{0,Var_Delt_Z,Var_Delt_Y})
-	
-	local t3rc_aprox = RelPointTool(t3rc_final, {0, 0, -40})
-	
-	local t3rc_salida = RelPointTool(t3rc_final, {0, 0, -60})
-	 
-	-- P15 TORNILLO 3
-	MovJ(t3rc_correjido, {v = 90, a = 100, tool = 1, user = 0, cp = 100})
-	MovJ(t3rc_aprox, {user = 0, tool = 1, a = 100, v = 100, cp = 100})
-	-- POS INICIAL ATORNILLADO
-	onAT()
-	-- ENCENDER EL ATORNILLADOR()
-	MovL(t3rc_final, {v = speedBolt, a = 100, tool = 1, user = 0})
-	-- POS FINAL ATORNILLADO
-	Wait(1000)
-	offAT()
-	-- APAGAR EL ATORNILLADOR()
-	local tornilloMalo = verificarTorque()
-	MovL(t3rc_salida, {v = 50, a = 100, tool = 1, user = 0})
-	
-	MovJ(t3rc_correjido, {user = 0, tool = 1, a = 100, v = 100, cp = 100})
-	MovJ(P1, {user = 0, tool = 1, a = 100, v = 100, cp = 100})
-	setTask(DO_Task11)
-	Wait(200)
-	SetGlobalVariable("TORNILLO_TOMADO", 0)
-	resetTask(DO_Task11)
+		local t3rc_correjido = RelPointUser(P32,{0,Var_Delt_Z,Var_Delt_Y})
+		local t3rc_final = RelPointUser(P16,{0,Var_Delt_Z,Var_Delt_Y})
+		local t3rc_aprox = RelPointTool(t3rc_final, {0, 0, -40})
+		local t3rc_salida = RelPointTool(t3rc_final, {0, 0, -60})
+		 
+		-- P15 TORNILLO 3
+		MovJ(t3rc_correjido, {v = 90, a = 100, tool = 1, user = 0, cp = 100})
+		MovJ(t3rc_aprox, {user = 0, tool = 1, a = 100, v = 100, cp = 100})
+		-- POS INICIAL ATORNILLADO
+		onAT()
+		-- ENCENDER EL ATORNILLADOR()
+		MovL(t3rc_final, {v = speedBolt, a = 100, tool = 1, user = 0})
+		-- POS FINAL ATORNILLADO
+		Wait(1000)
+		offAT()
+		-- APAGAR EL ATORNILLADOR()
+		local tornilloMalo = verificarTorque()
+		MovL(t3rc_salida, {v = 50, a = 100, tool = 1, user = 0})
+		
+		MovJ(t3rc_correjido, {user = 0, tool = 1, a = 100, v = 100, cp = 100})
+		MovJ(P1, {user = 0, tool = 1, a = 100, v = 100, cp = 100})
+		setTask(DO_Task11)
+		Wait(200)
+		SetGlobalVariable("TORNILLO_TOMADO", 0)
+		resetTask(DO_Task11)
 		if tornilloMalo == true then
 			-- AGREGAR LÓGICA PARA SENSAR PRECENCIA DE TORNILLO EN BOCALLAVE. POSIBLE TORNILLO SIN ROSCA
-			verificarTornillo()
+			verificarTornillo(ntornillo)
 		end	
 
+		-- RESETEAMOS LAS VARIABLES GLOBALES USADAS EN EL PROCESO PARA ELIMINAR FALSOS VALORES FUTUROS
+		Var_Delt_X = 0
+		Var_Delt_Y = 0
+		Var_Delt_Z = 0
 
 	else
 		-- PUNTO PREVIO A SENSADO
@@ -693,9 +661,14 @@ function inicializacion()
 	-- OBTIENE EL NÚMERO DE TORNILLOS DEL CICLO
 	TOTAL_TORNILLOS = getTornillosCiclo()
 	if TOTAL_TORNILLOS > 0 then
-		print(string.format("CICLO RECIBIDO: &d. TORNILLOS A COLOCAR: %d", TOTAL_TORNILLOS))
+		print(string.format("CICLO RECIBIDO: %d. TORNILLOS A COLOCAR: %d", CYCLE_CODE, TOTAL_TORNILLOS))
 	end
 	DETENER_ALIMENTADOR = 0
+
+	-- Conectar socket persistente de camara si esta activa
+	if CAMARA_ACTIVA then
+		Conectar_Camara()
+	end
 	return
 end
 
@@ -802,12 +775,12 @@ repeat
 			setTask(DO_Task10)
 			-- LE AVISA EL PLC QUE ESTAMOS EN ZONA DE TOMA DE TORNILLO
 			--Leer el número del tornillo actual que toca tomar
-			local indice_actualBK1 = indice_tornilloBK1
+			local indice_actualBK1 = GetGlobalVariable("indice_tornilloBK1")
 			-- Leer el número del tornillo actual que toca tomar
-			local indice_actualBK2 = indice_tornilloBK2
+			local indice_actualBK2 = GetGlobalVariable("indice_tornilloBK2")
 			-- ===================================================================================
 			if
-				indice_tornilloBK1 < MAX_TORBAK and presencia_tornillo_BK1 == ON and TORNILLO_TOMADO ~= 1
+				indice_actualBK1 < MAX_TORBAK and presencia_tornillo_BK1 == ON and TORNILLO_TOMADO ~= 1
 			then
 				-- Movimientos físicos sobre las bandejas
 				bandejaActiva = 1
@@ -829,7 +802,7 @@ repeat
 				SetGlobalVariable("indice_tornilloBK1", indice_actualBK1)
 				-- ===================================================================================*************
 			elseif
-				presencia_tornillo_BK2 == ON and indice_tornilloBK2 < MAX_TORBAK and TORNILLO_TOMADO ~= 1
+				presencia_tornillo_BK2 == ON and indice_actualBK2 < MAX_TORBAK and TORNILLO_TOMADO ~= 1
 			then
 				bandejaActiva = 2
 				-- Movimientos físicos sobre las bandejas
@@ -844,13 +817,14 @@ repeat
 				offsetX, offsetY = getOffsetsBKP2(indice_actualBK2)
 				-- P_tomaBK2
 				p_TOMA = P6
+				offAT()
 				-- Actualizar y guardar el número del próximo tornillo
 				indice_actualBK2 = indice_actualBK2 + 1
 				SetGlobalVariable("indice_tornilloBK2", indice_actualBK2)
 			end
 			-- ===================================================================================
 			if
-				bandejaActiva > 0 and (indice_tornilloBK1 < MAX_TORBAK or indice_tornilloBK2 < MAX_TORBAK)
+				bandejaActiva > 0 and (indice_actualBK1 < MAX_TORBAK or indice_actualBK2 < MAX_TORBAK)
 			then
 				-- ===================================================================================
 				-- Punto de aproximación(Z - 150 mm)
@@ -903,7 +877,7 @@ repeat
 		end
 	end
 	resetTask(DO_Task10)
-  	DETENER_ALIMENTADOR = 0
+	DETENER_ALIMENTADOR = 0
 	-- ==========================================================
 	-- 5. SECUENCIA DE COLOCACIÓN DE TORNILLOS
 	offAT()
@@ -948,10 +922,13 @@ if cuenta_tornillo == TOTAL_TORNILLOS then
 	clearAllTask()
 	DETENER_ALIMENTADOR = 0
 end
+offAlim()
 -- HL0_AL
 -- ==========================================================
 -- FINALIZA LOOP PRINCIPAL DE ATORNILLADO
 -- ==========================================================
+offAlim()
+-- HL0_AL APAGA ALIMENTADOR
 Wait(20)
 SetGlobalVariable("cuentaTornillo", 0)
 Wait(20)

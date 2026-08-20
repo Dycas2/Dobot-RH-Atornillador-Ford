@@ -14,7 +14,7 @@
 local tornillos_en_rampa = 0
 -- Variable local para recordar el estado físico del motor
 local alimentador_activo = false
-
+local ultima_cuenta_tornillo = 0
 
 while true do
 	while (DETENER_ALIMENTADOR == 1) do
@@ -26,9 +26,17 @@ while true do
 		Wait(50)
 		-- Vital para no bloquear el procesador del controlador
 	end
-	if (cuentaTornillo > 0) then
-		tornillos_en_rampa = tornillos_en_rampa - cuentaTornillo
+
+	-- Sincronización por flanco con el conteo del hilo principal
+	local cuenta_actual = GetGlobalVariable("cuentaTornillo")
+	if cuenta_actual > ultima_cuenta_tornillo then
+		local delta = cuenta_actual - ultima_cuenta_tornillo
+		tornillos_en_rampa = math.max(0, tornillos_en_rampa - delta)
+		ultima_cuenta_tornillo = cuenta_actual
+	elseif cuenta_actual == 0 then
+		ultima_cuenta_tornillo = 0
 	end
+
 	-- 2. Lectura simultánea de sensores
 	presencia_tornillo_AL = DI(1)
 	-- SQ1_AL1 (Sensor de salida)
@@ -44,11 +52,11 @@ while true do
 	-- 4. LÓGICA DE HISTÉRESIS (Encendido y Apagado)
 	-- A. Límite superior: Si la rampa se llenó (4), apagamos
 
-if presencia_tornillo_AL == 1 then
+	if presencia_tornillo_AL == 1 then
 		cont_reint_llen = 0
 		-- Reseteamos los reintentos porque se llenó con éxito
 		SetOutputBool(DO_Alim_VACIO, 0)
-end
+	end
 
 	if tornillos_en_rampa >= 4 and alimentador_activo then
 		DO(2, OFF)

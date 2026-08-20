@@ -13,39 +13,36 @@
 -- This thread is the main thread and can call any commands.
 -- Script Lua: Robot como Cliente TCP hacia el PLC
 
-while true do
-  local ip = '136.129.6.2'
-  -- IP de tu PLC
-  local port = 44818
-  -- El puerto configurado en el programa de tu PLC
-  local err = 0
-  local socket = 0
-  local RecBuf = ''
-  conectar_PLC = 1 
-  -- 1. Crear la red TCP como Cliente (isServer = false)
-  err, socket = TCPCreate(false, ip, port)
-  if conectar_PLC == 1 then
-    if err == 0 then
-      if conexion_OK ~= 1 then
+local ip = '136.129.6.2'
+-- IP de tu PLC
+local port = 44818
+-- El puerto configurado en el programa de tu PLC
+local err = 0
+local socket = 0
+local RecBuf = ''
+conectar_PLC = 1
+
+-- 1. Crear la red TCP como Cliente (isServer = false) una sola vez fuera del bucle para evitar saturación de sockets
+err, socket = TCPCreate(false, ip, port)
+if err == 0 then
+    if conexion_OK ~= 1 then
         print('Cliente TCP creado. Intentando conectar al PLC...')
-      end
-      -- 2. Conectarse al PLC (espera hasta 5 segundos para conectar)
-      err = TCPStart(socket, 5)
-      if err == 0 and conexion_OK ~= 1 then
+    end
+    -- 2. Conectarse al PLC (espera hasta 5 segundos para conectar)
+    err = TCPStart(socket, 5)
+    if err == 0 and conexion_OK ~= 1 then
         print('Conectado al PLC exitosamente.')
         conexion_OK = 1
-      else
-        if conexion_OK ~= 1 then
-          print('No se pudo conectar al PLC (Tiempo de espera agotado).')
-        end
-      end
     else
-      print('Error al crear el Cliente TCP.')
+        if conexion_OK ~= 1 then
+            print('No se pudo conectar al PLC (Tiempo de espera agotado).')
+        end
     end
-  else
-    TCPDestroy(socket)
-    conexion_OK = 0
-    print('Conexión TCP finalizada.')
-  end
-  Wait(50)
+else
+    print('Error al crear el Cliente TCP.')
+end
+
+while true do
+    -- Mantiene vivo el hilo sin crear sockets repetidamente
+    Wait(100)
 end
